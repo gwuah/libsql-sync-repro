@@ -90,38 +90,8 @@ fn main() {
             println!("       sync_offline() will call try_push() as expected.");
         }
 
-        // --- Show that SELECT 1 and PRAGMA page_size do NOT fix it ---
-        let mut fresh: *mut libsql::ffi::sqlite3 = ptr::null_mut();
-        assert_eq!(
-            libsql::ffi::sqlite3_open_v2(
-                c_path.as_ptr(),
-                &mut fresh,
-                libsql::ffi::SQLITE_OPEN_READWRITE,
-                ptr::null(),
-            ),
-            libsql::ffi::SQLITE_OK,
-        );
-
-        println!();
-        println!("--- Why SELECT 1 and PRAGMA page_size don't work ---\n");
-
-        let before = wal_frame_count(fresh);
-        exec(fresh, "SELECT 1");
-        let after_select1 = wal_frame_count(fresh);
-        exec(fresh, "PRAGMA page_size");
-        let after_pragma = wal_frame_count(fresh);
-
-        println!("Fresh connection frame count:          {}", before);
-        println!("After SELECT 1:                        {}", after_select1);
-        println!("After PRAGMA page_size:                {}", after_pragma);
-        println!();
-        println!("Neither starts a read transaction because they don't access");
-        println!("database pages. Only table-accessing queries (like reading");
-        println!("sqlite_master) trigger walTryBeginRead -> walIndexReadHdr.");
-
         libsql::ffi::sqlite3_close(writer);
         libsql::ffi::sqlite3_close(sync_conn);
-        libsql::ffi::sqlite3_close(fresh);
     }
 }
 

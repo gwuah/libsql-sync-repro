@@ -21,20 +21,39 @@ sync_offline()
   → skips try_push()
 ```
 
-## Why Some Queries Don't Fix It
+## Possible Fixes
 
-- `SELECT 1` — evaluated as a constant expression; no database pages are read, so no read transaction is started.
-- `PRAGMA page_size` — returns a cached config value; also doesn't start a read transaction.
+### Option 1: Query `sqlite_master` before checking frame count
 
-## The Fix
+**Where**: `sync.rs`, in `is_ahead_of_remote()` or at the start of `sync_offline()`.
 
-Execute a table-accessing query on the sync connection before checking the frame count:
+Execute `SELECT 1 FROM sqlite_master LIMIT 1` on the sync connection before calling `wal_frame_count()`. This forces `walTryBeginRead()` → `walIndexReadHdr()`, refreshing the cached `mxFrame`.
 
-```sql
-SELECT 1 FROM sqlite_master LIMIT 1
-```
+**Pros:**
+- Minimal change — one line of SQL
+- Works entirely within existing APIs
+- No C code changes required
 
-This forces `walTryBeginRead()` → `walIndexReadHdr()`, which refreshes `pWal->hdr.mxFrame` from shared memory. After that, `wal_frame_count()` returns the correct value.
+**Cons:**
+- Relies on an implicit side effect (query forces WAL header read)
+- The intent isn't obvious without a comment explaining why
+
+### Option 2: Expose a WAL header refresh in the FFI layer
+
+**Where**: Add a new C function like `libsql_wal_refresh()` in `wal.c` that calls `walIndexReadHdr()` directly, then call it from `is_ahead_of_remote()`.
+
+**Pros:**
+- Precise — does exactly what's needed and nothing more
+- No query overhead, no transaction side effects
+- Makes the intent explicit in the API
+
+**Cons:**
+- Requires changes across 3 layers: C code (`wal.c`), FFI bindings (`libsql-sys`), and Rust wrapper
+- `walIndexReadHdr()` is a static function in `wal.c` — you'd need to expose it or write a thin wrapper
+- More code to review, more surface area for bugs
+- Harder to get merged upstream — touching SQLite internals is sensitive
+
+**Verdict**: The "proper" fix architecturally, but significantly more effort and risk for marginal benefit over Option 1.
 
 ## Relevant Source Locations
 
@@ -47,22 +66,4 @@ This forces `walTryBeginRead()` → `walIndexReadHdr()`, which refreshes `pWal->
 
 ```
 cargo run
-```
-
-## Expected Output
-
-```
-=== Stale WAL Bug Reproduction ===
-
-Writer connection WAL frame count: 4
-Sync connection WAL frame count:   0
-
-BUG: sync connection sees 0 frames (stale pWal->hdr.mxFrame)
-     while writer has 4 frames in the WAL.
-
---- Applying fix: SELECT 1 FROM sqlite_master LIMIT 1 ---
-
-Sync connection WAL frame count:   4
-
-FIXED: after reading sqlite_master, sync connection sees all 4 frames.
 ```
