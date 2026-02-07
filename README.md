@@ -5,7 +5,10 @@ A reproduction for libsql bug where offline writes (on a seperate connection) ar
 ## Setup
 
 ```rust
-let db = Builder::new_synced_database(&path, url, token).build().await?
+let db = Builder::new_synced_database(&path, url, token)
+               .sync_interval(sync_interval)
+               .build()
+               .await?
 
 // you'd expect remote replication to work automatically
 // however it only replicates from remote -> local.
